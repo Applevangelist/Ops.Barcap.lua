@@ -23,17 +23,12 @@
 -- @field #string template Name of the late activated group to use from Mission Editor
 -- @field #string homebase Homebase airbase of the BarCap operation
 -- @field #number flightno (internal) counter
--- @field Ops.FlightGroup#FLIGHTGROUP Flight (Internal) holding the current flightgroup object
--- @field Ops.Auftrag#AUFTRAG Task (Internal) holding the current Auftrag object
--- @field Wrapper.Group#GROUP Target The assigned target object
 -- @field Core.Point#COORDINATE Capcoord The holding position for BarCap
--- @field #number ammothreshold How many AA missiles to be left in the group when deciding to assigne the next Ops.Auftrag#AUFTRAG 
+-- @field #number ammothreshold How many AA missiles need to be left in the group when deciding to assign the next Ops.Auftrag#AUFTRAG 
 -- @field #boolean debug Debug state, switch reports on/off
--- @field #boolean switchstate (internal use only)
--- @field Wrapper.Group#GROUP Group (internal) Spawned current group used for Ops.FlightGroup#FLIGHTGROUP 
 -- @extends Core.Fsm#FSM
 
---- *The worst thing that can happen to a good cause is, not to be skillfully attacked, but to be ineptly defended.* - Frédéric Bastiat 
+--- *The worst thing that can happen to a good cause is, not to be skillfully attacked, but to be ineptly defended.* - FrÃ©dÃ©ric Bastiat 
 -- 
 -- Simple FSM for BARCAP with AUFTRAG
 -- 
@@ -46,40 +41,26 @@
 BARCAP = {
   ClassName         = "BARCAP",
   name              =  "generic",  --#string
-  verbose           =  true, --#boolean
+  verbose           =  false, --#boolean
   lid               =  "", --#string
   template          = "", --#string
   homebase           = "", --#string
   flightno          = 0,  --#number
-  Flight            = {}, --#FLIGHTGROUP
-  Task              = {}, --#AUFTRAG
-  Target             = {}, --#GROUP
-  Capcoord          =  {}, --#COORDINATE Object 
+  Capcoord          =  {}, --Core.Positionable#COORDINATE Object 
   ammothreshold     =  4,   --#number
   debug             = false,  --#boolean
-  switchstate       = false,    --#boolean
-  Group             = {}  --#GROUP
 }
 
 -- @field #string version
-BARCAP.version="0.0.2"
+BARCAP.version="0.3.0"
 env.info(string.format("***** Starting BARCAP Version %s *****", BARCAP.version))
-
--- globals
-_BARCAP_GRUPPE = nil
-_BARCAP_AUFTRAG = nil
-_BARCAP_ROTTE = nil
-_BARCAP_GRPNAME = nil
-_BARCAP_STATE = nil
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- TODO list
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 -- TODO: make multiple object safe (how to get around usage of globals?)
--- TODO: Add more user functions
 -- TODO: loads of other stuff
--- TODO: Cleanup unused fields
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Constructor
@@ -91,9 +72,13 @@ _BARCAP_STATE = nil
 function BARCAP:New()
 
   -- set initial parameters
-  --self.verbose = true
-  --self.debug = true 
-
+  -- internal globals
+  _BARCAP_GRUPPE = nil --Wrapper.Group#GROUP current active Group object
+  _BARCAP_AUFTRAG = nil --Ops.Auftrag#AUFTRAG current active Auftrag object
+  _BARCAP_ROTTE = nil --Ops.FlightGroup#FLIGHTGROUP current active Flightgroup object
+  _BARCAP_GRPNAME = nil --#string Name of the _BARCAP_GRUPPE 
+  _BARCAP_STATE = nil --#string Global state
+  
   -- Inherit everything from FSM class.
   local self=BASE:Inherit(self, FSM:New()) -- #BARCAP
 
@@ -102,7 +87,7 @@ function BARCAP:New()
   
   --set start state
   self:SetStartState("Off")
-  
+
   -- transitions
   -- From -- Event -- To
   self:AddTransition( "Off", "Start", "Initializing" )
@@ -231,12 +216,13 @@ function BARCAP:NewSpawnGroup(number)
   local group = SPAWN:NewWithAlias(templ,flightname)
   group:InitAirbase(homebase,SPAWN.Takeoff.Hot)
   group:InitDelayOff()
+  --group:InitLimit(4,4)
   group:OnSpawnGroup(
     function (spwngrp)
       _BARCAP_GRUPPE = spwngrp
     end
   )
-  group:Spawn() 
+  group:SpawnScheduled(30,0)
   return flightname
 end
 
@@ -287,34 +273,34 @@ end
 --- Create new Flightgroup
 -- @param #BARCAP self
 -- @param Wrapper.Group#GROUP gruppe Base Group object to be used
--- @return Ops.Auftrag#FLIGHTGROUP flight Returns Flightgroup object
+-- @return Ops.FlightGroup#FLIGHTGROUP flight Returns Flightgroup object
 function BARCAP:NewFlightGroup(gruppe)
   local flight = nil
   local homebase = AIRBASE:FindByName(self.homebase)
   -- Short info.
   local text=string.format("BARCAP | Get Flight Group")
-  self:I(text)  
+  self:F(text)  
   m = MESSAGE:New(text,15,"Info"):ToAllIf(self.verbose)
   --
  flight = FLIGHTGROUP:New(gruppe)
+    flight:New(gruppe)
     flight:SetHomebase(homebase)
     flight:SetDespawnAfterLanding()
     flight:SetDefaultRadio(300,"AM",false)
     flight:SetFuelCriticalRTB(true)
     flight:SetVerbosity(0)
-    flight:Activate()
-    --
+    --flight:Activate()
   return flight
 end
 
 --- Check if Flightgroup is ready for (next) Auftrag
 -- @param #BARCAP self
--- @param Ops.Auftrag#FLIGHTGROUP wing Current Flightgroup to check
+-- @param Ops.FlightGroup#FLIGHTGROUP wing Current Flightgroup to check
 -- @return #boolean ready Returns boolean ready state
 function BARCAP:CheckFlightReady(wing)
   local air = "no"
   local fuel = "no"
-  local rotte = wing --#FLIGHTGROUP
+  local rotte = wing --Ops.FlightGrooup#FLIGHTGROUP
   local ammolim = self.ammothreshold
   local ready = false
   local ammotable = rotte:GetAmmoTot()
@@ -334,10 +320,11 @@ function BARCAP:CheckFlightReady(wing)
   end
   -- Short info.
   local text=string.format("BARCAP | Flight State: Airborne: %s Low Fuel: %s Missiles: %d (%d)", air, fuel, missiles, ammolim)
-  self:I(text)  
+  self:F(text)  
   m = MESSAGE:New(text,15,"Info"):ToAllIf(self.verbose)
   return ready 
 end
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Start
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -348,12 +335,12 @@ end
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onafterStart(From, Event, To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   -- Set some string id for output to DCS.log file.
   self.lid=string.format("BARCAP %s | ", self.name)
   -- Short info.
   local text=string.format("Starting BARCAP", self.name)
-  self:I(self.lid..text)  
+  self:F(self.lid..text)  
   m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
   -- check if we are ready to go
   if self.homebase == "" or self.template == "" or self.Capcoord == nil then
@@ -371,11 +358,12 @@ end
 -- @param #string Event Event.
 -- @param #string To To state
 function BARCAP:onenterInitializing(From,Event,To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   -- Short info.
   local text=string.format("Init BARCAP", self.name)
-  self:I(self.lid..text)
-  -- 
+  self:F(self.lid..text)
+  m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
+  --
   local gruppe = _BARCAP_GRUPPE
   local gruppealive = false
   if gruppe == nil then
@@ -406,13 +394,18 @@ function BARCAP:onenterInitializing(From,Event,To)
       if From == "Initializing" then
         -- lets see where we are
         local aufgabe = _BARCAP_AUFTRAG
+        -- AUFTRAG *might* be over already
+        if aufgabe:IsOver() then 
+          -- we need a new Auftrag
+          _BARCAP_AUFTRAG = self:NewCAPAuftrag()
+        end
         -- get some status
-        if gruppealive and aufgabe:IsPlanned() and rotte == nil then
+        if gruppealive and aufgabe:IsNotOver() and rotte == nil then
           -- get us a flightgrp pls
           _BARCAP_ROTTE = self:NewFlightGroup(gruppe)
           self:__Prep(10)        
         end
-        if gruppealive and aufgabe:IsPlanned() and rottealive then
+        if gruppealive and aufgabe:IsNotOver() and rottealive then
             _BARCAP_STATE = "Executing"
             self:__Execute(-15)
         end -- group task and flight alive
@@ -427,10 +420,10 @@ end --function
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onafterExecute(From, Event, To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   -- Short info.
   local text=string.format("Executing BARCAP")
-  self:I(self.lid..text)  
+  self:F(self.lid..text)  
   m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
   -- Get Going
   if From == "Initializing" or From == "Intercepting" then 
@@ -446,12 +439,12 @@ end
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onafterIntercept(From,Event,To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   -- Short info.
   local target = self.Target
   local targetname = target:GetName()
   local text=string.format("BARCAP: Intercept target %s", targetname)
-  self:I(self.lid..text)  
+  self:F(self.lid..text)  
   m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
   -- Get Going
   local rotte = _BARCAP_ROTTE
@@ -471,10 +464,10 @@ end
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onbeforeStatus(From, Event, To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   local state = _BARCAP_STATE
   local text=string.format("Global State: %s ", state)
-  self:I(self.lid..text)  
+  self:F(self.lid..text)  
   m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
 end
 
@@ -484,7 +477,7 @@ end
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onafterStatus(From, Event, To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   -- Get some updates
   local grpname = "none"
   if _BARCAP_STATE ~= "Failed" then --we're still alive
@@ -499,7 +492,7 @@ function BARCAP:onafterStatus(From, Event, To)
     local Fname = _BARCAP_GRPNAME
     -- Short info.
     local text=string.format("Status: %s (%s) executing in state %s with Auftrag %s state %s", grpname, Fname, Rstate, AType, Astate)
-    self:I(self.lid..text)  
+    self:F(self.lid..text)  
     m = MESSAGE:New(self.lid..text,15,"Info"):ToAllIf(self.verbose)
     --
     if Rstate == "Inbound" then
@@ -543,7 +536,7 @@ end
 -- @param #string Event Event.
 -- @param #string To To state.
 function BARCAP:onafterStop(From, Event, To)
-  self:I( { From, Event, To })
+  self:F( { From, Event, To })
   text = "BARCAP state:"..self:GetState()
   m = MESSAGE:New(text,15,"Info"):ToAllIf(self.verbose)
   --TODO: maybe cleanup ongoing Auftrag if any?
